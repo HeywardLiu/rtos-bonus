@@ -291,6 +291,24 @@ typedef struct xLIST
         ( pxTCB ) = ( pxConstList )->pxIndex->pvOwner;                                         \
     }
 
+/* Traverse ReadyTaskList to find the task with min deadline */
+#define listGET_MIN_DEADLINE_ENTRY(pxTCB, pxList)                                    \
+    {                                                                                \
+        List_t *const pxConstList = (pxList);                                        \
+        ListItem_t *pxTargetNode = (pxList)->pxIndex;                                \
+        int min_deadline = pxTargetNode->pvOwner->deadline;                          \
+        while ((void *)(pxConstList)->pxIndex != (void *)&((pxConstList)->xListEnd)) \
+        {                                                                            \
+            if (pxConstList->pxIndex->pvOwner->deadline < min_deadline)              \
+            {                                                                        \
+                pxTargetNode = pxConstList->pxIndex;                                 \
+                min_deadline = pxTargetNode->pvOwner->deadline;                      \
+            }                                                                        \
+            (pxConstList)->pxIndex = (pxConstList)->pxIndex->pxNext;                 \
+        }                                                                            \
+        (pxTCB) = (pxTCB)(pxTargetNode->pvOwner);                                    \
+    }
+
 /*
  * Version of uxListRemove() that does not return a value.  Provided as a slight
  * optimisation for xTaskIncrementTick() by being inline.
