@@ -133,7 +133,7 @@
     } /* taskRECORD_READY_PRIORITY */
 
 /*-----------------------------------------------------------*/
-
+// Original FreeRTOS
 #define taskSELECT_HIGHEST_PRIORITY_TASK()                                              \
     {                                                                                   \
         UBaseType_t uxTopPriority = uxTopReadyPriority;                                 \
@@ -150,27 +150,50 @@
         uxTopReadyPriority = uxTopPriority;                                             \
     } /* taskSELECT_HIGHEST_PRIORITY_TASK */
 
-// 1. Search directly
-// pxCurrentTCB = target_TCB;
-// int min_deadline = pxCurrentTCB->deadline;
-// TCB_t *old_TCB = pxCurrentTCB;
-// TCB_t *target_TCB = pxCurrentTCB;
-// listGET_OWNER_OF_NEXT_ENTRY(pxCurrentTCB, &(pxReadyTasksLists[uxTopPriority]));
-// while (pxCurrentTCB != old_TCB)
-// {
-//     if (pxCurrentTCB->deadline < min_deadline)
-//     {
-//         target_TCB = pxCurrentTCB;
-//         min_deadline = pxCurrentTCB->deadline;
-//     }
-// }
-// pxCurrentTCB = target_TCB;
-// uxTopReadyPriority = uxTopPriority;
+// way_1. Search directly
+#define taskSELECT_EDF_TASK_1()                                                         \
+    {                                                                                   \
+        UBaseType_t uxTopPriority = uxTopReadyPriority;                                 \
+                                                                                        \
+        /* Find the highest priority queue that contains ready tasks. */                \
+        while (listLIST_IS_EMPTY(&(pxReadyTasksLists[uxTopPriority])))                  \
+        {                                                                               \
+            configASSERT(uxTopPriority);                                                \
+            --uxTopPriority;                                                            \
+        }                                                                               \
+        int min_deadline = pxCurrentTCB->deadline;                                      \
+        TCB_t *old_TCB = pxCurrentTCB;                                                  \
+        TCB_t *target_TCB = pxCurrentTCB;                                               \
+        pxCurrentTCB = target_TCB;                                                      \
+        listGET_OWNER_OF_NEXT_ENTRY(pxCurrentTCB, &(pxReadyTasksLists[uxTopPriority])); \
+        while (pxCurrentTCB != old_TCB)                                                 \
+        {                                                                               \
+            if (pxCurrentTCB->deadline < min_deadline)                                  \
+            {                                                                           \
+                target_TCB = pxCurrentTCB;                                              \
+                min_deadline = pxCurrentTCB->deadline;                                  \
+            }                                                                           \
+        }                                                                               \
+        pxCurrentTCB = target_TCB;                                                      \
+        uxTopReadyPriority = uxTopPriority;                                             \
+    } /* taskSELECT_EDF_TASK */
 
-// 2. Modifiy list function
-// Traverse ReadyTaskList to find task with min deadline
-// listGET_MIN_DEADLINE_ENTRY(pxCurrentTCB, &(pxReadyTasksLists[uxTopPriority]));
-// uxTopReadyPriority = uxTopPriority;
+// way_2. Modifiy list function
+#define taskSELECT_EDF_TASK_2()                                                        \
+    {                                                                                  \
+        UBaseType_t uxTopPriority = uxTopReadyPriority;                                \
+                                                                                       \
+        /* Find the highest priority queue that contains ready tasks. */               \
+        while (listLIST_IS_EMPTY(&(pxReadyTasksLists[uxTopPriority])))                 \
+        {                                                                              \
+            configASSERT(uxTopPriority);                                               \
+            --uxTopPriority;                                                           \
+        }                                                                              \
+        /* Traverse ReadyTaskList to find task with min deadline*/                     \
+        uxTopReadyPriority = uxTopPriority;                                            \
+        listGET_MIN_DEADLINE_ENTRY(pxCurrentTCB, &(pxReadyTasksLists[uxTopPriority])); \
+    } /* taskSELECT_EDF_TASK */
+
 /*-----------------------------------------------------------*/
 
 /* Define away taskRESET_READY_PRIORITY() and portRESET_READY_PRIORITY() as
@@ -276,8 +299,10 @@
 typedef struct tskTaskControlBlock /* The old naming convention is used to prevent breaking kernel aware debuggers. */
 {
     volatile StackType_t *pxTopOfStack; /*< Points to the location of the last item placed on the tasks stack.  THIS MUST BE THE FIRST MEMBER OF THE TCB STRUCT. */
-    char msgBuffer[100];
-    int deadline;
+    TickType_t compTime;
+    TickType_t deadline;
+    int reset;
+
 #if (portUSING_MPU_WRAPPERS == 1)
     xMPU_SETTINGS xMPUSettings; /*< The MPU settings are defined as part of the port layer.  THIS MUST BE THE SECOND MEMBER OF THE TCB STRUCT. */
 #endif
@@ -2752,6 +2777,12 @@ BaseType_t xTaskIncrementTick(void)
     TickType_t xItemValue;
     BaseType_t xSwitchRequired = pdFALSE;
 
+    /* bonus lab */
+    taskDISABLE_INTERRUPTS();
+    TCB_t *tcb = xTaskGetCurrentTaskHandle();
+    tcb->compTime--;
+    taskENABLE_INTERRUPTS();
+
     /* Called by the portable layer each time a tick interrupt occurs.
      * Increments the tick then checks to see if the new tick value will cause any
      * tasks to be unblocked. */
@@ -3086,10 +3117,24 @@ void vTaskSwitchContext(void)
          * optimised asm code. */
         TCB_t *old_tcb = pxCurrentTCB;
         taskSELECT_HIGHEST_PRIORITY_TASK(); /*lint !e9079 void * is used as this macro is used with timers and co-routines too.  Alignment is known to be fine as the type of the pointer stored and retrieved is the same. */
+        // taskSELECT_EDF_TASK_1();
         traceTASK_SWITCHED_IN();
         TCB_t *new_tcb = pxCurrentTCB;
-        printf("%s to %s\n", old_tcb->pcTaskName, new_tcb->pcTaskName);
 
+        if (strcmp(old_tcb->pcTaskName, new_tcb->pcTaskName) != 0)
+        {
+            if (xTaskGetResetFlag(old_tcb) == 1)
+            {
+                sprintf(&msgBuffer[CurrentIdx++], "%d complete %s %s\n", (int)xTaskGetTickCount(), old_tcb->pcTaskName, new_tcb->pcTaskName);
+                xTaskSetResetFlag(old_tcb, 0);
+            }
+            else
+            {
+                sprintf(&msgBuffer[CurrentIdx++], "%d preempt %s %s\n", (int)xTaskGetTickCount(), old_tcb->pcTaskName, new_tcb->pcTaskName);
+            }
+        }
+
+        int a = 0;
 /* After the new task is switched in, update the global errno. */
 #if (configUSE_POSIX_ERRNO == 1)
         {
@@ -5426,3 +5471,63 @@ static void freertos_tasks_c_additions_init(void)
 #endif
 
 #endif /* if ( configINCLUDE_FREERTOS_TASK_C_ADDITIONS_H == 1 ) */
+
+void xTaskSetDeadline(int deadline)
+{
+    taskDISABLE_INTERRUPTS();
+    TCB_t *tcb = xTaskGetCurrentTaskHandle();
+    tcb->deadline = deadline;
+    taskENABLE_INTERRUPTS();
+}
+
+int xTaskGetCompTime()
+{
+    taskDISABLE_INTERRUPTS();
+    TCB_t *tcb = xTaskGetCurrentTaskHandle();
+    int compTime = tcb->compTime;
+    taskENABLE_INTERRUPTS();
+    return compTime;
+}
+
+void xTaskSetCompTime(int CompTime)
+{
+    taskDISABLE_INTERRUPTS();
+    TCB_t *tcb = xTaskGetCurrentTaskHandle();
+    tcb->compTime = CompTime;
+    taskENABLE_INTERRUPTS();
+}
+
+void xTaskSetResetFlagUser(int value)
+{
+    taskDISABLE_INTERRUPTS();
+    TCB_t *tcb = xTaskGetCurrentTaskHandle();
+    tcb->reset = value;
+    taskENABLE_INTERRUPTS();
+}
+
+int xTaskGetResetFlagUser()
+{
+    int flag;
+    taskDISABLE_INTERRUPTS();
+    TCB_t *tcb = xTaskGetCurrentTaskHandle();
+    flag = tcb->reset;
+    taskENABLE_INTERRUPTS();
+
+    return flag;
+}
+
+void xTaskSetResetFlag(TCB_t *tcb, int value)
+{
+    taskDISABLE_INTERRUPTS();
+    tcb->reset = value;
+    taskENABLE_INTERRUPTS();
+}
+
+int xTaskGetResetFlag(TCB_t *tcb)
+{
+    int flag;
+    taskDISABLE_INTERRUPTS();
+    flag = tcb->reset;
+    taskENABLE_INTERRUPTS();
+    return flag;
+}
