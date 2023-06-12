@@ -1353,3 +1353,9 @@ extern "C"
 
 extern char msgBuffer[100][20];
 extern int CurrentIdx;
+
+typedef struct
+{
+    TickType_t compTime;
+    TickType_t period;
+} taskArgs;

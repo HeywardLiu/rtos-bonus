@@ -83,27 +83,49 @@ to ticks using the portTICK_PERIOD_MS constant. */
  * Called by main when mainCREATE_SIMPLE_BLINKY_DEMO_ONLY is set to 1 in
  * main.c.
  */
+char msgBuffer[100][20];
+int CurrentIdx = 0;
 void main_lab(void);
-
+void printMessage();
 /*-----------------------------------------------------------*/
-typedef struct
-{
-    int compTime;
-    int period;
-} taskArgs;
 
 static void task_1(void *parameters)
 {
     /* Remove compiler warning about unused parameter. */
     taskArgs *param = (taskArgs *)parameters;
+    xTaskSetDeadline(param->period);
+    xTaskSetCompTime(param->compTime);
 
     /* Initialise xNextWakeTime - this only needs to be done once. */
-    TickType_t xNextWakeTime;
-    xNextWakeTime = xTaskGetTickCount();
-    printf("T1 c:%d p:%d\n\n", (*param).compTime, (*param).period);
+    // TickType_t xNextWakeTime;
+    // xNextWakeTime = xTaskGetTickCount();
+
+    TickType_t start;
+    TickType_t end;
+    TickType_t todelay;
+    // pxCurrentTCB->deadline = param->period;
+    start = 0;
     for (;;)
     {
-        vTaskDelayUntil(&xNextWakeTime, mainQUEUE_SEND_FREQUENCY_MS);
+        while (xTaskGetCompTime() > 0)
+        {
+        }
+        if ((int)xTaskGetTickCount() > 20)
+            printMessage();
+        end = xTaskGetTickCount();
+        todelay = (param->period) - (end - start);
+        start = start + param->period;
+        taskDISABLE_INTERRUPTS();
+        // Reset compTime
+        xTaskSetCompTime(param->compTime);
+        xTaskSetDeadline(xTaskGetTickCount() + todelay);
+        xTaskSetResetFlagUser(1);
+        taskENABLE_INTERRUPTS();
+
+        if (todelay > 0)
+            vTaskDelay(todelay);
+        else if (todelay == 0 && (xTaskGetResetFlagUser() == 1))
+            xTaskSetResetFlagUser(0);
     }
 }
 
@@ -111,15 +133,43 @@ static void task_2(void *parameters)
 {
     /* Remove compiler warning about unused parameter. */
     taskArgs *param = (taskArgs *)parameters;
+    xTaskSetDeadline(param->period);
+    xTaskSetCompTime(param->compTime);
 
     /* Initialise xNextWakeTime - this only needs to be done once. */
-    TickType_t xNextWakeTime;
-    xNextWakeTime = xTaskGetTickCount();
-    printf("T2 c:%d p:%d\n\n", (*param).compTime, (*param).period);
+
+    TickType_t start;
+    TickType_t end;
+    TickType_t todelay;
+    // TickType_t xNextWakeTime;
+    // xNextWakeTime = xTaskGetTickCount();
+
+    start = 0;
     for (;;)
     {
-        vTaskDelayUntil(&xNextWakeTime, mainQUEUE_SEND_FREQUENCY_MS);
-    };
+        while (xTaskGetCompTime() > 0)
+        {
+        }
+        if ((int)xTaskGetTickCount() > 20)
+            printMessage();
+        end = xTaskGetTickCount();
+        todelay = (TickType_t)(param->period) - (end - start);
+        start = start + param->period;
+        taskDISABLE_INTERRUPTS();
+        // Reset compTime
+        xTaskSetCompTime(param->compTime);
+        xTaskSetDeadline(xTaskGetTickCount() + todelay);
+        xTaskSetResetFlagUser(1);
+        taskENABLE_INTERRUPTS();
+
+        if (todelay > 0)
+            vTaskDelay(todelay);
+        else if (todelay == 0 && (xTaskGetResetFlagUser() == 1))
+            xTaskSetResetFlagUser(0);
+
+        // if (todelay == 0)
+        //     xTaskSetResetFlagUser(0);
+    }
 }
 
 void main_lab(void)
@@ -129,10 +179,22 @@ void main_lab(void)
     args[0].period = 3;
     args[1].compTime = 3;
     args[1].period = 5;
-    TickType_t xNextWakeTime;
-    xNextWakeTime = xTaskGetTickCount();
-    xTaskCreate(task_2, "T2", configMINIMAL_STACK_SIZE, &args[1], T1_PRIORITY, NULL);
-    xTaskCreate(task_1, "T1", configMINIMAL_STACK_SIZE, &args[0], T1_PRIORITY, NULL);
+    //    TickType_t xNextWakeTime;
+    //    xNextWakeTime = xTaskGetTickCount();
+    xTaskCreate(task_1, "T1", configMINIMAL_STACK_SIZE, (void *)&args[0], T1_PRIORITY, NULL);
+    xTaskCreate(task_2, "T2", configMINIMAL_STACK_SIZE, (void *)&args[1], T1_PRIORITY, NULL);
+    sprintf(&msgBuffer[CurrentIdx++], "T1 c:%d p:%d\n", args[0].compTime, args[0].period);
+    sprintf(&msgBuffer[CurrentIdx++], "T2 c:%d p:%d\n", args[1].compTime, args[1].period);
     vTaskStartScheduler();
 }
 /*-----------------------------------------------------------*/
+
+void printMessage()
+{
+    static int i = 0;
+    for (; i < CurrentIdx; i++)
+        printf("%s", msgBuffer[i]);
+
+    while (1)
+        ;
+}

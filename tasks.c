@@ -151,32 +151,6 @@
     } /* taskSELECT_HIGHEST_PRIORITY_TASK */
 
 // way_1. Search directly
-#define taskSELECT_EDF_TASK_1()                                                         \
-    {                                                                                   \
-        UBaseType_t uxTopPriority = uxTopReadyPriority;                                 \
-                                                                                        \
-        /* Find the highest priority queue that contains ready tasks. */                \
-        while (listLIST_IS_EMPTY(&(pxReadyTasksLists[uxTopPriority])))                  \
-        {                                                                               \
-            configASSERT(uxTopPriority);                                                \
-            --uxTopPriority;                                                            \
-        }                                                                               \
-        int min_deadline = pxCurrentTCB->deadline;                                      \
-        TCB_t *old_TCB = pxCurrentTCB;                                                  \
-        TCB_t *target_TCB = pxCurrentTCB;                                               \
-        pxCurrentTCB = target_TCB;                                                      \
-        listGET_OWNER_OF_NEXT_ENTRY(pxCurrentTCB, &(pxReadyTasksLists[uxTopPriority])); \
-        while (pxCurrentTCB != old_TCB)                                                 \
-        {                                                                               \
-            if (pxCurrentTCB->deadline < min_deadline)                                  \
-            {                                                                           \
-                target_TCB = pxCurrentTCB;                                              \
-                min_deadline = pxCurrentTCB->deadline;                                  \
-            }                                                                           \
-        }                                                                               \
-        pxCurrentTCB = target_TCB;                                                      \
-        uxTopReadyPriority = uxTopPriority;                                             \
-    } /* taskSELECT_EDF_TASK */
 
 // way_2. Modifiy list function
 #define taskSELECT_EDF_TASK_2()                                                        \
@@ -973,6 +947,9 @@ static void prvInitialiseNewTask(TaskFunction_t pxTaskCode,
     }
 
     pxNewTCB->uxPriority = uxPriority;
+    taskArgs *param = (taskArgs *)pvParameters;
+    pxNewTCB->deadline = param->period;
+
 #if (configUSE_MUTEXES == 1)
     {
         pxNewTCB->uxBasePriority = uxPriority;
@@ -3118,12 +3095,13 @@ void vTaskSwitchContext(void)
         TCB_t *old_tcb = pxCurrentTCB;
         taskSELECT_HIGHEST_PRIORITY_TASK(); /*lint !e9079 void * is used as this macro is used with timers and co-routines too.  Alignment is known to be fine as the type of the pointer stored and retrieved is the same. */
         // taskSELECT_EDF_TASK_1();
+        // selectEDF();
         traceTASK_SWITCHED_IN();
         TCB_t *new_tcb = pxCurrentTCB;
 
         if (strcmp(old_tcb->pcTaskName, new_tcb->pcTaskName) != 0)
         {
-            if (xTaskGetResetFlag(old_tcb) == 1)
+            if (xTaskGetResetFlag(old_tcb) == 1 || old_tcb->compTime == 0)
             {
                 sprintf(&msgBuffer[CurrentIdx++], "%d complete %s %s\n", (int)xTaskGetTickCount(), old_tcb->pcTaskName, new_tcb->pcTaskName);
                 xTaskSetResetFlag(old_tcb, 0);
@@ -5531,3 +5509,30 @@ int xTaskGetResetFlag(TCB_t *tcb)
     taskENABLE_INTERRUPTS();
     return flag;
 }
+
+void selectEDF()
+{
+    UBaseType_t uxTopPriority = uxTopReadyPriority;
+
+    /* Find the highest priority queue that contains ready tasks. */
+    while (listLIST_IS_EMPTY(&(pxReadyTasksLists[uxTopPriority])))
+    {
+        configASSERT(uxTopPriority);
+        --uxTopPriority;
+    }
+    int min_deadline = 1000000;
+    listGET_OWNER_OF_NEXT_ENTRY(pxCurrentTCB, &(pxReadyTasksLists[uxTopPriority]));
+    TCB_t *head_tcb = pxCurrentTCB;
+    TCB_t *target_TCB = pxCurrentTCB;
+    while (pxCurrentTCB != head_tcb)
+    {
+        if (pxCurrentTCB->deadline < min_deadline)
+        {
+            target_TCB = pxCurrentTCB;
+            min_deadline = pxCurrentTCB->deadline;
+        }
+        listGET_OWNER_OF_NEXT_ENTRY(pxCurrentTCB, &(pxReadyTasksLists[uxTopPriority]));
+    }
+    pxCurrentTCB = target_TCB;
+    uxTopReadyPriority = uxTopPriority;
+} /* taskSELECT_EDF_TASK */
